@@ -50,71 +50,83 @@ def resize_image(img):
     return re_im, (new_h / img_size[0], new_w / img_size[1])
 
 
-def main(argv=None):
-    if os.path.exists(FLAGS.output_path):
-        shutil.rmtree(FLAGS.output_path)
-    os.makedirs(FLAGS.output_path)
-    os.environ['CUDA_VISIBLE_DEVICES'] = FLAGS.gpu
-
-    with tf.get_default_graph().as_default():
-        input_image = tf.placeholder(tf.float32, shape=[None, None, None, 3], name='input_image')
-        input_im_info = tf.placeholder(tf.float32, shape=[None, 3], name='input_im_info')
-
-        global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
-
-        bbox_pred, cls_pred, cls_prob = model.model(input_image)
-
-        variable_averages = tf.train.ExponentialMovingAverage(0.997, global_step)
-        saver = tf.train.Saver(variable_averages.variables_to_restore())
-
-        with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
+class CTPNWrapper:
+    def __init__(self):
+        with tf.get_default_graph().as_default():
+            self.input_image = tf.placeholder(tf.float32, shape=[None, None, None, 3], name='input_image')
+            self.input_im_info = tf.placeholder(tf.float32, shape=[None, 3], name='input_im_info')
+            self.global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
+            self.bbox_pred, self.cls_pred, self.cls_prob = model.model(self.input_image)
+            variable_averages = tf.train.ExponentialMovingAverage(0.997, self.global_step)
+            self.saver = tf.train.Saver(variable_averages.variables_to_restore())
+            # with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
+            self.session =  tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
             ckpt_state = tf.train.get_checkpoint_state(FLAGS.checkpoint_path)
             model_path = os.path.join(FLAGS.checkpoint_path, os.path.basename(ckpt_state.model_checkpoint_path))
             print('Restore from {}'.format(model_path))
-            saver.restore(sess, model_path)
+            self.saver.restore(self.session, model_path)
 
-            im_fn_list = get_images()
-            for im_fn in im_fn_list:
-                print('===============')
-                print(im_fn)
-                start = time.time()
-                try:
-                    im = cv2.imread(im_fn)[:, :, ::-1]
-                except:
-                    print("Error reading image {}!".format(im_fn))
-                    continue
+    def predict(self, image):
+            # ckpt_state = tf.train.get_checkpoint_state(FLAGS.checkpoint_path)
+            # model_path = os.path.join(FLAGS.checkpoint_path, os.path.basename(ckpt_state.model_checkpoint_path))
+            # print('Restore from {}'.format(model_path))
+            # self.saver.restore(sess, model_path)
 
-                img, (rh, rw) = resize_image(im)
-                h, w, c = img.shape
-                im_info = np.array([h, w, c]).reshape([1, 3])
-                bbox_pred_val, cls_prob_val = sess.run([bbox_pred, cls_prob],
-                                                       feed_dict={input_image: [img],
-                                                                  input_im_info: im_info})
+            # im_fn_list = get_images()
+            # for im_fn in im_fn_list:
+            #  print('===============')
+            # print(im_fn)
+            # start = time.time()
+            # try:
+            #     im = cv2.imread(im_fn)[:, :, ::-1]
+            # except:
+            #     print("Error reading image {}!".format(im_fn))
+            #     continue
 
-                textsegs, _ = proposal_layer(cls_prob_val, bbox_pred_val, im_info)
-                scores = textsegs[:, 0]
-                textsegs = textsegs[:, 1:5]
+            image = image[:, :, ::-1]
+            img, (rh, rw) = resize_image(image)
+            h, w, c = img.shape
+            im_info = np.array([h, w, c]).reshape([1, 3])
+            bbox_pred_val, cls_prob_val = self.session.run([self.bbox_pred, self.cls_prob],
+                                                   feed_dict={self.input_image: [img],
+                                                              self.input_im_info: im_info})
 
-                textdetector = TextDetector(DETECT_MODE='H')
-                boxes = textdetector.detect(textsegs, scores[:, np.newaxis], img.shape[:2])
-                boxes = np.array(boxes, dtype=np.int)
+            textsegs, _ = proposal_layer(cls_prob_val, bbox_pred_val, im_info)
+            scores = textsegs[:, 0]
+            textsegs = textsegs[:, 1:5]
 
-                cost_time = (time.time() - start)
-                print("cost time: {:.2f}s".format(cost_time))
+            textdetector = TextDetector(DETECT_MODE='H')
+            boxes = textdetector.detect(textsegs, scores[:, np.newaxis], img.shape[:2])
+            boxes = np.array(boxes, dtype=np.int)
 
-                for i, box in enumerate(boxes):
-                    cv2.polylines(img, [box[:8].astype(np.int32).reshape((-1, 1, 2))], True, color=(0, 255, 0),
-                                  thickness=2)
-                img = cv2.resize(img, None, None, fx=1.0 / rh, fy=1.0 / rw, interpolation=cv2.INTER_LINEAR)
-                cv2.imwrite(os.path.join(FLAGS.output_path, os.path.basename(im_fn)), img[:, :, ::-1])
+            # cost_time = (time.time() - start)
+            # print("cost time: {:.2f}s".format(cost_time))
 
-                with open(os.path.join(FLAGS.output_path, os.path.splitext(os.path.basename(im_fn))[0]) + ".txt",
-                          "w") as f:
-                    for i, box in enumerate(boxes):
-                        line = ",".join(str(box[k]) for k in range(8))
-                        line += "," + str(scores[i]) + "\r\n"
-                        f.writelines(line)
+            # for i, box in enumerate(boxes):
+            #     cv2.polylines(img, [box[:8].astype(np.int32).reshape((-1, 1, 2))], True, color=(0, 255, 0),
+            #                   thickness=2)
+            # img = cv2.resize(img, None, None, fx=1.0 / rh, fy=1.0 / rw, interpolation=cv2.INTER_LINEAR)
+            # cv2.imwrite(os.path.join(FLAGS.output_path, os.path.basename(im_fn)), img[:, :, ::-1])
+            return img, boxes
+
+            # with open(os.path.join(FLAGS.output_path, os.path.splitext(os.path.basename(im_fn))[0]) + ".txt",
+            #           "w") as f:
+            #     for i, box in enumerate(boxes):
+            #         line = ",".join(str(box[k]) for k in range(8))
+            #         line += "," + str(scores[i]) + "\r\n"
+            #         f.writelines(line)
+
+
+def main(_):
+    pass
 
 
 if __name__ == '__main__':
-    tf.app.run()
+    wrapper = CTPNWrapper()
+    images = get_images()
+    for image_fname in images:
+        image = cv2.imread(image_fname)
+        img, boxes = wrapper.predict(image)
+        print(img, boxes)
+    # tf.app.run()
+    print(img, boxes)
