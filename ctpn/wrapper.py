@@ -12,17 +12,12 @@ from ctpn.nets import model_train as model
 from ctpn.utils.rpn_msr.proposal_layer import proposal_layer
 from ctpn.utils.text_connector.detectors import TextDetector
 
-tf.app.flags.DEFINE_string('test_data_path', 'data/demo/', '')
-tf.app.flags.DEFINE_string('output_path', 'data/res/', '')
-tf.app.flags.DEFINE_string('gpu', '0', '')
-tf.app.flags.DEFINE_string('checkpoint_path', 'checkpoints_mlt/', '')
-FLAGS = tf.app.flags.FLAGS
 
 
-def get_images():
+def get_images(path):
     files = []
     exts = ['jpg', 'png', 'jpeg', 'JPG']
-    for parent, dirnames, filenames in os.walk(FLAGS.test_data_path):
+    for parent, dirnames, filenames in os.walk(path):
         for filename in filenames:
             for ext in exts:
                 if filename.endswith(ext):
@@ -51,7 +46,7 @@ def resize_image(img):
 
 
 class CTPNWrapper:
-    def __init__(self):
+    def __init__(self, checkpoint_path):
         with tf.get_default_graph().as_default():
             self.input_image = tf.placeholder(tf.float32, shape=[None, None, None, 3], name='input_image')
             self.input_im_info = tf.placeholder(tf.float32, shape=[None, 3], name='input_im_info')
@@ -61,8 +56,9 @@ class CTPNWrapper:
             self.saver = tf.train.Saver(variable_averages.variables_to_restore())
             # with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
             self.session =  tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
-            ckpt_state = tf.train.get_checkpoint_state(FLAGS.checkpoint_path)
-            model_path = os.path.join(FLAGS.checkpoint_path, os.path.basename(ckpt_state.model_checkpoint_path))
+            # os.listdir(checkpoint_path)
+            ckpt_state = tf.train.get_checkpoint_state(checkpoint_path)
+            model_path = os.path.join(checkpoint_path, os.path.basename(ckpt_state.model_checkpoint_path))
             print('Restore from {}'.format(model_path))
             self.saver.restore(self.session, model_path)
 
@@ -102,10 +98,10 @@ class CTPNWrapper:
             # cost_time = (time.time() - start)
             # print("cost time: {:.2f}s".format(cost_time))
 
-            # for i, box in enumerate(boxes):
-            #     cv2.polylines(img, [box[:8].astype(np.int32).reshape((-1, 1, 2))], True, color=(0, 255, 0),
-            #                   thickness=2)
-            # img = cv2.resize(img, None, None, fx=1.0 / rh, fy=1.0 / rw, interpolation=cv2.INTER_LINEAR)
+            for i, box in enumerate(boxes):
+                cv2.polylines(img, [box[:8].astype(np.int32).reshape((-1, 1, 2))], True, color=(0, 255, 0),
+                              thickness=2)
+            img = cv2.resize(img, None, None, fx=1.0 / rh, fy=1.0 / rw, interpolation=cv2.INTER_LINEAR)
             # cv2.imwrite(os.path.join(FLAGS.output_path, os.path.basename(im_fn)), img[:, :, ::-1])
             return img, boxes
 
@@ -122,8 +118,10 @@ def main(_):
 
 
 if __name__ == '__main__':
-    wrapper = CTPNWrapper()
-    images = get_images()
+    # tf.app.run(main)
+    import sys
+    wrapper = CTPNWrapper(sys.argv[1])
+    images = get_images(sys.argv[2])
     for image_fname in images:
         image = cv2.imread(image_fname)
         img, boxes = wrapper.predict(image)
