@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
+from collections import namedtuple
 from ctpn.nets import model_train as model
 from ctpn.utils.rpn_msr.proposal_layer import proposal_layer
 from ctpn.utils.text_connector.detectors import TextDetector
@@ -55,7 +56,9 @@ class CTPNWrapper:
             variable_averages = tf.train.ExponentialMovingAverage(0.997, self.global_step)
             self.saver = tf.train.Saver(variable_averages.variables_to_restore())
             # with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
-            self.session =  tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
+            config = tf.ConfigProto(allow_soft_placement=True)
+            config.gpu_options.allow_growth = True
+            self.session =  tf.Session(config=config)
             # os.listdir(checkpoint_path)
             ckpt_state = tf.train.get_checkpoint_state(checkpoint_path)
             model_path = os.path.join(checkpoint_path, os.path.basename(ckpt_state.model_checkpoint_path))
@@ -93,17 +96,15 @@ class CTPNWrapper:
 
             textdetector = TextDetector(DETECT_MODE='H')
             boxes = textdetector.detect(textsegs, scores[:, np.newaxis], img.shape[:2])
+            bboxes = list(map(CTPNWrapper.construct_box(rh, rw), boxes))
             boxes = np.array(boxes, dtype=np.int)
-
-            # cost_time = (time.time() - start)
-            # print("cost time: {:.2f}s".format(cost_time))
 
             for i, box in enumerate(boxes):
                 cv2.polylines(img, [box[:8].astype(np.int32).reshape((-1, 1, 2))], True, color=(0, 255, 0),
                               thickness=2)
             img = cv2.resize(img, None, None, fx=1.0 / rh, fy=1.0 / rw, interpolation=cv2.INTER_LINEAR)
             # cv2.imwrite(os.path.join(FLAGS.output_path, os.path.basename(im_fn)), img[:, :, ::-1])
-            return img, boxes
+            return img, bboxes
 
             # with open(os.path.join(FLAGS.output_path, os.path.splitext(os.path.basename(im_fn))[0]) + ".txt",
             #           "w") as f:
@@ -111,6 +112,19 @@ class CTPNWrapper:
             #         line = ",".join(str(box[k]) for k in range(8))
             #         line += "," + str(scores[i]) + "\r\n"
             #         f.writelines(line)
+    @staticmethod
+    def construct_box(rh, rw):
+        BBox = namedtuple('BBox', 'x y X Y')
+        def __inner(box):
+            box = box[:8]
+            xs = box[::2]
+            ys = box[1::2]
+
+            return BBox(
+                x = int(min(xs)//rh), X = int(max(xs)//rh),
+                y = int(min(ys)//rw), Y = int(max(ys)//rw)
+            )
+        return __inner
 
 
 def main(_):
